@@ -206,7 +206,7 @@ function Invoke-NSNitroRestApi {
         [Parameter(Mandatory=$true)] [string]$ResourceType,
         [Parameter(Mandatory=$false)] [string]$ResourceName,
         [Parameter(Mandatory=$false)] [string]$Action,
-        [Parameter(Mandatory=$false)] [ValidateScript({$OperationMethod -in @("GET","DELETE")})] [hashtable]$Arguments=@{},
+        [Parameter(Mandatory=$false)] [ValidateScript({$OperationMethod -in @("GET", "DELETE")})] [hashtable]$Arguments=@{},
         [Parameter(Mandatory=$false)] [ValidateScript({$OperationMethod -notin @("GET", "DELETE")})] [hashtable]$Payload=@{},
         [Parameter(Mandatory=$false)] [switch]$GetWarning=$false,
         [Parameter(Mandatory=$false)] [ValidateSet("EXIT", "CONTINUE", "ROLLBACK")] [string]$OnErrorAction="EXIT"
