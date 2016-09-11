@@ -206,8 +206,8 @@ function Invoke-NSNitroRestApi {
         [Parameter(Mandatory=$true)] [string]$ResourceType,
         [Parameter(Mandatory=$false)] [string]$ResourceName,
         [Parameter(Mandatory=$false)] [string]$Action,
-        [Parameter(Mandatory=$false)] [ValidateScript({$OperationMethod -eq "GET"})] [hashtable]$Arguments=@{},
-        [Parameter(Mandatory=$false)] [ValidateScript({$OperationMethod -ne "GET"})] [hashtable]$Payload=@{},
+        [Parameter(Mandatory=$false)] [ValidateScript({$OperationMethod -in @("GET", "DELETE")})] [hashtable]$Arguments=@{},
+        [Parameter(Mandatory=$false)] [ValidateScript({$OperationMethod -notin @("GET", "DELETE")})] [hashtable]$Payload=@{},
         [Parameter(Mandatory=$false)] [switch]$GetWarning=$false,
         [Parameter(Mandatory=$false)] [ValidateSet("EXIT", "CONTINUE", "ROLLBACK")] [string]$OnErrorAction="EXIT"
     )
@@ -219,7 +219,7 @@ function Invoke-NSNitroRestApi {
     if (-not [string]::IsNullOrEmpty($ResourceName)) {
         $uri += "/$ResourceName"
     }
-    if ($OperationMethod -ne "GET") {
+    if ($OperationMethod -notin @("GET", "DELETE")) {
         if (-not [string]::IsNullOrEmpty($Action)) {
             $uri += "?action=$Action"
         }
@@ -236,7 +236,7 @@ function Invoke-NSNitroRestApi {
     }
     Write-Verbose "URI: $uri"
 
-    if ($OperationMethod -ne "GET") {
+    if ($OperationMethod -notin @("GET", "DELETE")) {
         Write-Verbose "Building Payload"
         $warning = if ($GetWarning) { "YES" } else { "NO" }
         $hashtablePayload = @{}
@@ -256,7 +256,7 @@ function Invoke-NSNitroRestApi {
             ErrorVariable = "restError"
         }
 
-        if ($OperationMethod -ne "GET") {
+        if ($OperationMethod -notin @("GET", "DELETE")) {
             $restParams.Add("Body",$jsonPayload)
         }
 
