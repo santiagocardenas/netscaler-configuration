@@ -242,7 +242,7 @@ function Invoke-NSNitroRestApi {
         $hashtablePayload = @{}
         $hashtablePayload."params" = @{"warning"=$warning;"onerror"=$OnErrorAction;<#"action"=$Action#>}
         $hashtablePayload.$ResourceType = $Payload
-        $jsonPayload = ConvertTo-Json $hashtablePayload -Depth ([int]::MaxValue)
+        $jsonPayload = ConvertTo-Json $hashtablePayload -Depth 100
         Write-Verbose "JSON Payload:`n$jsonPayload"
     }
 
