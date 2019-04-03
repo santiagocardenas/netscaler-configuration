@@ -17,6 +17,26 @@ $Script:NSURLProtocol = "https"
 
 function Set-NSMgmtProtocol {
     <#
+    .SYNOPSIS<#
+.SYNOPSIS
+    This module file contains NetScaler Configuration functions.
+.DESCRIPTION
+    This module file contains NetScaler Configuration functions.
+.NOTES
+    Copyright (c) Citrix Systems, Inc. All rights reserved.
+#>
+#Requires -Version 3
+
+Set-StrictMode -Version Latest
+
+#region Blog Post Part 1
+
+# Define default URL protocol to https, which can be changed by calling Set-Protocol function
+$Script:NSURLProtocol = "https"
+}
+
+function Set-NSMgmtProtocol {
+    <#
     .SYNOPSIS
         Set $Script:NSURLProtocol, this will be used for all subsequent invocation of NITRO APIs
     .DESCRIPTION
@@ -219,7 +239,7 @@ function Invoke-NSNitroRestApi {
     if (-not [string]::IsNullOrEmpty($ResourceName)) {
         $uri += "/$ResourceName"
     }
-    if ($OperationMethod -notin @("GET", "DELETE")) {
+    if ($OperationMethod -notin @("GET", "DELETE", "PUT")) {
         if (-not [string]::IsNullOrEmpty($Action)) {
             $uri += "?action=$Action"
         }
@@ -470,6 +490,57 @@ function Add-NSIPResource {
     }
 }
 
+function Add-NSIPRouteResource {
+    <#
+    .SYNOPSIS
+        Create NetScaler IP Route Resource(s)
+    .DESCRIPTION
+        Create NetScaler IP Route Resource(s)
+    .PARAMETER NSSession
+        An existing custom NetScaler Web Request Session object returned by Connect-NSAppliance
+    .PARAMETER NetworkAddress
+        IPv4 Network address route to create on the NetScaler appliance. Cannot be changed after the route is created
+    .PARAMETER Netmask
+        Subnet mask associated with the Network
+    .PARAMETER Gateway
+        Nex-Hop address for the destination network
+    .EXAMPLE
+        Add network route
+        Add-NSIPRouteResource -NSSession $Session -NetworkAddress "10.108.151.0" -Netmask "255.255.255.0" -Gateway "10.108.150.1"
+    .NOTES
+        Copyright (c) Patrick Nelson. All rights reserved.
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)] [PSObject]$NSSession,
+        [Parameter(Mandatory=$true)] [string]$NetworkAddress,
+        [Parameter(Mandatory=$true)] [string]$Netmask,
+        [Parameter(Mandatory=$true)] [string]$Gateway
+    )
+    Begin {
+        Write-Verbose "$($MyInvocation.MyCommand): Enter"
+
+        Write-Verbose "Validating Subnet Mask"
+        $SubnetMaskObj = New-Object -TypeName System.Net.IPAddress -ArgumentList 0
+        if (-not [System.Net.IPAddress]::TryParse($Netmask,[ref]$SubnetMaskObj) -or $SubnetMaskObj.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+            throw "'$Netmask' is an invalid IPv4 subnet mask"
+        }
+    }
+    Process {
+        Write-Verbose "Validating IP Address"
+        $IPAddressObj = New-Object -TypeName System.Net.IPAddress -ArgumentList 0
+        if (-not [System.Net.IPAddress]::TryParse($Gateway,[ref]$IPAddressObj) -or $IPAddressObj.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+            throw "'$Gateway' is an invalid IPv4 address"
+        }
+
+        $payload = @{network=$NetworkAddress;netmask=$Netmask;gateway=$Gateway}
+        $response = Invoke-NSNitroRestApi -NSSession $NSSession -OperationMethod POST -ResourceType route -Payload $payload -Action add
+    }
+    End {
+        Write-Verbose "$($MyInvocation.MyCommand): Exit"
+    }
+}
+
 function Set-NSHostName {
     <#
     .SYNOPSIS
@@ -623,6 +694,39 @@ function Add-NSDnsNameServer {
 
         $payload = @{ip=$DNSServerIPAddress}
         $response = Invoke-NSNitroRestApi -NSSession $NSSession -OperationMethod POST -ResourceType dnsnameserver -Payload $payload -Action add
+    }
+    End {
+        Write-Verbose "$($MyInvocation.MyCommand): Exit"
+    }
+
+}
+
+function Add-NSDnsSuffix {
+    <#
+    .SYNOPSIS
+        Add domain name suffix
+    .DESCRIPTION
+        Add domain name suffix
+    .PARAMETER NSSession
+        An existing custom NetScaler Web Request Session object returned by Connect-NSAppliance
+    .PARAMETER DNSSuffix
+        domain name suffix to append to DNS queries
+    .EXAMPLE
+        Add-NSDnsSuffix -NSSession $Session -DNSSSuffix contoso.com
+    .NOTES
+        Copyright (c) Patrick Nelson. All rights reserved.
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)] [PSObject]$NSSession,
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true,ValueFromPipelineByPropertyName=$true)] [string]$DNSSuffix
+    )
+    Begin {
+        Write-Verbose "$($MyInvocation.MyCommand): Enter"
+    }
+    Process {
+        $payload = @{Dnssuffix=$DNSSuffix}
+        $response = Invoke-NSNitroRestApi -NSSession $NSSession -OperationMethod POST -ResourceType Dnssuffix -Payload $payload -Action add
     }
     End {
         Write-Verbose "$($MyInvocation.MyCommand): Exit"
@@ -880,7 +984,7 @@ function Add-NSServerCertificate {
     $certKeyFileName= "$($fileName).key"
     $certReqFileName = "$($fileName).req"
     $certFileName = "$($fileName).cert"
-
+    $certPublicKey = $null
     $certReqFileFull = "$($env:TEMP)\$certReqFileName"
     $certFileFull = "$($env:TEMP)\$certFileName"
 
@@ -906,33 +1010,93 @@ function Add-NSServerCertificate {
         $certReqContent | Set-Content $certReqFileFull -Encoding Byte
 
         Write-Verbose "Requesting certificate"
-        certreq.exe -Submit -q -attrib "CertificateTemplate:webserver" -config $CAName $certReqFileFull $certFileFull
+        certreq.exe -Submit -q -attrib "CertificateTemplate:webserver" -config $CAName $certReqFileFull $certFileFull | Out-Null
 
         if (-not $? -or $LASTEXITCODE -ne 0) {
             throw "certreq.exe failed to request certificate"
         }
-
-        Write-Verbose "Uploading certificate"
-        if (Test-Path $certFileFull) {
-            $certContent = Get-Content $certFileFull -Encoding "Byte"
-            $certContentBase64 = [System.Convert]::ToBase64String($certContent)
-
-            $payload = @{filename=$certFileName;filecontent=$certContentBase64;filelocation="/nsconfig/ssl/";fileencoding="BASE64"}
-            $response = Invoke-NSNitroRestApi -NSSession $NSSession -OperationMethod POST -ResourceType systemfile -Payload $payload -Action add
-        } else {
-            throw "Cert file '$certFileFull' not found."
-        }
+            $certPublicKey =  [System.IO.File]::ReadAllText($certFileFull)
+            Upload-Certificate -NSSession $NSSession -certFileFull $certFileFull
 
         Write-Verbose "Creating certificate request"
         Add-NSCertKeyPair -NSSession $NSSession -CertKeyName $fileName -CertPath $certFileName -KeyPath $certKeyFileName
     }
     finally {
         Write-Verbose "Cleaning up local temp files"
+                     
         Remove-Item -Path "$env:TEMP\$CommonName.*" -Force
     }
-
+    return $certPublicKey
     Write-Verbose "$($MyInvocation.MyCommand): Exit"
 }
+
+function Upload-Certificate {
+<#
+    .SYNOPSIS
+        Upload a certificate to the NetScaler Appliance
+    .DESCRIPTION
+        Upload a certificate to the NetScaler Appliance
+    .PARAMETER NSSession
+        An existing custom NetScaler Web Request Session object returned by Connect-NSAppliance
+    .PARAMETER certFileFull
+        The cert file to upload        
+    .EXAMPLE
+        Upload-Certificate -NSSession $NSSession -certFileFull $certFileFull
+    .NOTES
+        Copyright (c) Patrick Nelson. All rights reserved.
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)] [PSObject]$NSSession,
+        [Parameter(Mandatory=$true)] [string]$certFileFull
+    )
+        Write-Verbose "Uploading certificate"
+        if (Test-Path $certFileFull) {
+            $certContent = Get-Content $certFileFull -Encoding "Byte"
+            $certContentBase64 = [System.Convert]::ToBase64String($certContent)
+            $certFilename = ([System.IO.FileInfo]$certFileFull).Name
+
+            $payload = @{filename=$certFileName;filecontent=$certContentBase64;filelocation="/nsconfig/ssl/";fileencoding="BASE64"}
+            $response = Invoke-NSNitroRestApi -NSSession $NSSession -OperationMethod POST -ResourceType systemfile -Payload $payload -Action add
+        } else {
+            throw "Cert file '$certFileFull' not found."
+        }
+}
+
+function Add-NSCAStore {
+    <#
+    .SYNOPSIS
+        Imports a CA certificate into the Netscaler CA Store
+    .DESCRIPTION
+        Imports a CA certificate into the Netscaler CA Store
+    .PARAMETER NSSession
+        An existing custom NetScaler Web Request Session object returned by Connect-NSAppliance
+    .PARAMETER Name
+        Name of the CA
+    .PARAMETER CACert
+        File Path to the CA cert PEM file
+    .EXAMPLE
+        Add-NSServer -NSSession $Session -ServerName "myServer" -ServerIPAddress "10.108.151.3"
+    .NOTES
+        Copyright (c) Patrick Nelson. All rights reserved.
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)] [PSObject]$NSSession,
+        [Parameter(Mandatory=$false)] [string]$Name,
+        [Parameter(Mandatory=$true)] [string]$CACert
+    )
+
+        Write-Verbose "$($MyInvocation.MyCommand): Enter"
+
+        $certFilename = ([System.IO.FileInfo]$CACert).Name
+        #;certificatetype="ROOT_CERT"
+        $payload = @{certkey=$certFilename;cert=$certFilename;inform="PEM"}
+        $response = Invoke-NSNitroRestApi -NSSession $NSSession -OperationMethod POST -ResourceType sslcertkey -Payload $payload -Action add
+
+        Write-Verbose "$($MyInvocation.MyCommand): Exit"
+   }
+
 
 function Add-NSCertKeyPair {
     <#
@@ -1393,6 +1557,101 @@ function Add-NSAuthLDAPAction {
     Write-Verbose "$($MyInvocation.MyCommand): Exit"
 }
 
+
+function Add-NSAuthSAMLPolicy {
+    <#
+    .SYNOPSIS
+        Add a new NetScaler SAML policy
+    .DESCRIPTION
+        Add a new NetScaler LDAP policy
+    .PARAMETER NSSession
+        An existing custom NetScaler Web Request Session object returned by Connect-NSAppliance
+    .PARAMETER LDAPActionName
+        Name of the LDAP action to perform if the policy matches.
+    .PARAMETER LDAPPolicyName
+        Name of the LDAP policy
+    .PARAMETER LDAPRuleExpression
+        Name of the NetScaler named rule, or a default syntax expression, that the policy uses to determine whether to attempt to authenticate the user with the LDAP server.
+    .EXAMPLE
+        Add-NSAuthLDAPPolicy -NSSession $Session -LDAPActionName "10.8.115.245_LDAP" -LDAPPolicyName "10.8.115.245_LDAP_pol" -LDAPRuleExpression NS_TRUE
+    .NOTES
+        Copyright (c) Patrick Nelson, Inc. All rights reserved.
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)] [PSObject]$NSSession,
+        [Parameter(Mandatory=$true)] [string]$SAMLActionName,
+        [Parameter(Mandatory=$true)] [string]$SAMLPolicyName,
+        [Parameter(Mandatory=$false)] [string]$SAMLRuleExpression="ns_true"
+    )
+
+    Write-Verbose "$($MyInvocation.MyCommand): Enter"
+
+    $payload = @{reqaction=$SAMLActionName;name=$SAMLPolicyName;rule=$SAMLRuleExpression}
+    $response = Invoke-NSNitroRestApi -NSSession $NSSession -OperationMethod POST -ResourceType authenticationsamlpolicy -Payload $payload -Action add
+
+    Write-Verbose "$($MyInvocation.MyCommand): Exit"
+}
+
+function Add-NSAuthSAMLAction {
+    <#
+    .SYNOPSIS
+        Add a new NetScaler SAML action
+    .DESCRIPTION
+        Add a new NetScaler SAML action
+    .PARAMETER NSSession
+        An existing custom NetScaler Web Request Session object returned by Connect-NSAppliance
+    .PARAMETER SAMLActionName
+        Name of the SAML action
+    .PARAMETER RedirectURL
+        SAML IdP redirect URL
+    .PARAMETER IdPSAMLSigningCert
+        Public key that the IdP will use to sign the SAML assertions
+    .PARAMETER SPSAMLSigningCert
+        Keypair that the NetScaler will use to sign SAML Assertions
+    .PARAMETER SAMLUserField
+        Name of the SAMLAttribute to extract and use to authenticate
+    .PARAMETER SAMLIssuerName
+        Name of the SAML IdP Identity. 
+    .EXAMPLE
+        Add-NSAuthSAMLAction -NSSession $NSSession -SAMLActionName idp.xencloud.net -RedirectURL "https://idp.xencloud.net/openam/#login/realm" -IdPSAMLSigningCert "C:\scripts\idp.cer" -SPSAMLSigningCert main.xencloud.net -SAMLUserField sAMAccountName -SAMLIssuerName "idp.xencloud.net"
+    .NOTES
+        Copyright (c) Patrick Nelson All rights reserved.
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)] [PSObject]$NSSession,
+        [Parameter(Mandatory=$true)] [string]$SAMLActionName,
+        [Parameter(Mandatory=$true)] [string]$RedirectURL,
+        [Parameter(Mandatory=$true)] [string]$IdPSAMLSigningCert,
+        [Parameter(Mandatory=$true)] [string]$SPSAMLSigningCert,
+        [Parameter(Mandatory=$true)] [string]$SAMLIssuerName,
+        [Parameter(Mandatory=$false)] [string]$SAMLUserField="sAMAccountName"
+    )
+
+    if((Test-Path $IdPSAMLSigningCert))
+    {
+
+        Upload-Certificate -NSSession $NSSession -certFileFull $IdPSAMLSigningCert
+
+        Write-Verbose "Adding IdP SAML Signing key..."
+        
+        Add-NSCAStore -NSSession $NSSession -Name ($RedirectURL.Replace("https://", "")) -CACert $IdPSAMLSigningCert 
+
+        Write-Verbose "$($MyInvocation.MyCommand): Enter"
+
+        $payload =  @{name=$SAMLActionName;samlredirecturl=$RedirectURL;samlidpcertname=(([System.IO.FileInfo]$IdPSAMLSigningCert).Name);samlsigningcertname=$SPSAMLSigningCert;samlissuername=$SAMLIssuerName;samluserfield=$SAMLUserField}
+        $response = Invoke-NSNitroRestApi -NSSession $NSSession -OperationMethod POST -ResourceType authenticationsamlaction -Payload $payload -Action add
+
+        Write-Verbose "$($MyInvocation.MyCommand): Exit"    
+    }
+    else
+    {
+        throw "Cert file '$IdPSAMLSigningCert' not found."
+    }
+
+}
+
 function Add-NSAuthLDAPPolicy {
     <#
     .SYNOPSIS
@@ -1503,6 +1762,38 @@ function New-NSVPNVServerAuthLDAPPolicyBinding {
 
     $payload = @{name=$VirtualServerName;policy=$LDAPPolicyName}
     $response = Invoke-NSNitroRestApi -NSSession $NSSession -OperationMethod PUT -ResourceType vpnvserver_authenticationldappolicy_binding -Payload $payload -Action add
+
+    Write-Verbose "$($MyInvocation.MyCommand): Exit"
+}
+
+function New-NSVPNVServerAuthSAMLPolicyBinding {
+    <#
+    .SYNOPSIS
+        Bind authentication SAML policy to VPN virtual server
+    .DESCRIPTION
+        Bind authentication SAML policy to VPN virtual server
+    .PARAMETER NSSession
+        An existing custom NetScaler Web Request Session object returned by Connect-NSAppliance
+    .PARAMETER VirtualServerName
+        Name of the VPN virtual server
+    .PARAMETER LDAPPolicyName
+        The name of the policy to be bound to the vpn vserver
+    .EXAMPLE
+        New-NSVPNVServerAuthSAMLPolicyBinding -NSSession $Session -VirtualServerName "myVPNVirtualServer" -SAMLPolicyName "10.108.151.1_SAML_pol"
+    .NOTES
+        Copyright (c) Patrick Nelson. All rights reserved.
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)] [PSObject]$NSSession,
+        [Parameter(Mandatory=$true)] [string]$VirtualServerName,
+        [Parameter(Mandatory=$true)] [string]$SAMLPolicyName
+    )
+
+    Write-Verbose "$($MyInvocation.MyCommand): Enter"
+
+    $payload = @{name=$VirtualServerName;policy=$SAMLPolicyName}
+    $response = Invoke-NSNitroRestApi -NSSession $NSSession -OperationMethod PUT -ResourceType vpnvserver_authenticationsamlpolicy_binding -Payload $payload -Action add
 
     Write-Verbose "$($MyInvocation.MyCommand): Exit"
 }
@@ -1872,4 +2163,53 @@ function New-NSHighAvailabilityPair {
 
 }
 
-#endregion
+function Generate-SAMLMetadata {
+<#
+    .SYNOPSIS
+        Generates the SAML SP metadate for importing into a SAML IdP
+    .DESCRIPTION
+        Generates the SAML SP metadate for importing into a SAML IdP
+    .PARAMETER outputFile
+        The file you want to save the resulting metadata to. This file must not exist.
+    .PARAMETER entityID
+        The SAML entityID of the NetScaler     
+    .PARAMETER inputFile
+        The XML Template for the NetScaler metadata. Can be downloaded at https://support.citrix.com/article/CTX200271
+    .PARAMETER certCN
+        This is the CN of the certificate the NetScaler is going to use to sign its SAML Assertions
+    .PARAMETER certPublicKey
+        This is a String that contains the base64 encoded public key of the certificate that the NetScaler is going to use to sign its SAML assertions
+    .PARAMETER entityID    
+    .EXAMPLE
+        Upload-Certificate -NSSession $NSSession -certFileFull $certFileFull
+    .NOTES
+        Copyright (c) Patrick Nelson. All rights reserved.
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)] [string]$outputFile,
+        [Parameter(Mandatory=$true)] [string]$entityID,
+        [Parameter(Mandatory=$true)] [string]$inputFile,
+        [Parameter(Mandatory=$true)] [string]$certCN,
+        [Parameter(Mandatory=$true)] [string]$certPublicKey,
+        [Parameter(Mandatory=$true)] [string]$requestInitiator,
+        [Parameter(Mandatory=$true)] [string]$keyName,
+        [Parameter(Mandatory=$true)] [string]$assertionConsumerService
+
+    )
+        Write-Verbose "Generating ns_metadata.xml"
+        if((Test-Path $inputFile)) {
+            $xml = (Select-Xml -Path $inputFile -XPath /).Node
+            $xml.EntityDescriptor.entityID = $entityID
+            $xml.EntityDescriptor.SPSSODescriptor.Extensions.RequestInitiator.Location = $requestInitiator
+            $xml.EntityDescriptor.SPSSODescriptor.KeyDescriptor.KeyInfo.KeyName = $keyName
+            $xml.EntityDescriptor.SPSSODescriptor.KeyDescriptor.KeyInfo.X509Data.X509SubjectName = $certCN
+            $xml.EntityDescriptor.SPSSODescriptor.KeyDescriptor.KeyInfo.X509Data.X509Certificate = $certPublicKey
+            $xml.EntityDescriptor.SPSSODescriptor.AssertionConsumerService.Location = $assertionConsumerService
+
+            $xml.Save($outputFile)
+
+        } else {
+            throw "metadata file '$inputFile' not found."
+        }
+}
