@@ -15,25 +15,7 @@ Set-StrictMode -Version Latest
 # Define default URL protocol to https, which can be changed by calling Set-Protocol function
 $Script:NSURLProtocol = "https"
 
-function Set-NSMgmtProtocol {
-    <#
-    .SYNOPSIS<#
-.SYNOPSIS
-    This module file contains NetScaler Configuration functions.
-.DESCRIPTION
-    This module file contains NetScaler Configuration functions.
-.NOTES
-    Copyright (c) Citrix Systems, Inc. All rights reserved.
-#>
-#Requires -Version 3
 
-Set-StrictMode -Version Latest
-
-#region Blog Post Part 1
-
-# Define default URL protocol to https, which can be changed by calling Set-Protocol function
-$Script:NSURLProtocol = "https"
-}
 
 function Set-NSMgmtProtocol {
     <#
